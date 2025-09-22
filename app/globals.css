@@ -13,3 +13,11 @@ button:hover{background:#232a31}
 .lock{opacity:0.75}
 .grid{display:grid;grid-template-columns:1fr;gap:12px}
 @media(min-width:800px){.grid{grid-template-columns:1fr 1fr}}
+
+/* tabs and comments */
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{padding:6px 12px;border-radius:999px;border:1px solid #2a2f36;background:#0f1115;cursor:pointer}
+.tab.active{background:#1a1f24}
+.emoji-selected{outline:2px solid #64748b}
+.comment{padding:6px 0;border-bottom:1px solid #1f2428}
+.comment:last-child{border-bottom:0}
