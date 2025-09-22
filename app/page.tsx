@@ -265,7 +265,7 @@ export default function Page() {
   if (!session)
     return (
       <div className="card">
-        <h1>Couples Bucket List</h1>
+        <h1>N&A Bucket List</h1>
         <p className="muted">Sign in with a magic link.</p>
         <div className="row">
           <input placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
@@ -297,7 +297,7 @@ export default function Page() {
     <>
       <div className="row" style={{justifyContent:"space-between"}}>
         <div>
-          <h1>Couples Bucket List</h1>
+          <h1>N&A Bucket List</h1>
           <p className="muted">Share this couple code with your partner to join: <span className="badge">{coupleCode}</span></p>
           <p className="muted">Signed in as: {session.user.email}</p>
         </div>
