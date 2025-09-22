@@ -1,3 +1,4 @@
+import "./globals.css";
 export const metadata = { title: "Couples Bucket List" };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
