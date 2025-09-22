@@ -352,7 +352,7 @@ export default function Page() {
               </button>
             );
           })}
-          <button className={`tab ${selectedCat === "null" ? "active" : ""}`} onClick={()=>setSelectedCat("null")}>No category</button>
+          <button className={`tab ${selectedCat === "null" ? "active" : ""}`} onClick={()=>setSelectedCat("null")}>Misc</button>
           {/* Secret tab (shows only your own hidden items) */}
           <button
             className={`tab ${selectedCat === "secret" ? "active" : ""}`}
@@ -392,7 +392,7 @@ export default function Page() {
                     {i.done ? <span className="badge">Done together ✅</span> : null}
                     {i.categoryId
                       ? <span className="badge" style={{background: col!.bgDark, borderColor: col!.border, color:"#e5e7eb"}}>{cat?.name || "Category"}</span>
-                      : <span className="badge">No category</span>}
+                      : <span className="badge">Misc</span>}
                     {i.isSecret ? <span className="badge">Secret</span> : null}
                     {partnerId && i.alreadyDone?.[partnerId] ? <span className="badge">Partner already did this</span> : null}
                     {myEmoji ? <span className="badge">You: {myEmoji}</span> : null}
@@ -487,7 +487,7 @@ function AddItemCard({
         <select value={cat} onChange={e=>setCat(e.target.value)}>
           <option value="all">Choose category…</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          <option value="null">No category</option>
+          <option value="null">Misc</option>
         </select>
       </div>
       <div style={{marginTop:8}}>
