@@ -54,11 +54,9 @@ export default function Page() {
   }, [session]);
 
   const myId = session?.user.id ?? null;
-  const partnerId = useMemo(() => {
-    if (!myId) return null;
-    const partner = members.find(m => m.user_id !== myId);
-    return partner?.user_id ?? null;
-  }, [members, myId]);
+const partnerId =
+  myId ? (members.find(m => m.user_id !== myId)?.user_id ?? null) : null;
+
 
   async function signInWithMagicLink() {
     if (!email) return;
@@ -225,12 +223,12 @@ export default function Page() {
 
   const partnerReactionHint = "❤️ 😂 👍 😍 😮".split(" ");
 
-  const visibleItems = useMemo(() => {
-    if (!listDoc) return [];
-    let arr = listDoc.items;
-    if (selectedCat !== "all") arr = arr.filter(i => i.categoryId === selectedCat);
-    return arr;
-  }, [listDoc, selectedCat]);
+const visibleItems = !listDoc
+  ? []
+  : selectedCat === "all"
+  ? listDoc.items
+  : listDoc.items.filter(i => i.categoryId === selectedCat);
+
 
   const coupleCode = profile?.couple_id ?? "";
 
