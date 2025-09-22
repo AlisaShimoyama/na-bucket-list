@@ -6,7 +6,14 @@ import { supabase } from "../lib/supabaseClient";
 /* ========= Types ========= */
 type Session = { user: { id: string; email?: string | null } } | null;
 type Member = { user_id: string };
-type Category = { id: string; name: string };
+
+type Category = {
+  id: string;
+  name: string;
+  /** index into CATEGORY_PALETTE (persisted so colors never shuffle) */
+  colorIndex?: number;
+};
+
 type Comment = { id: string; userId: string; text: string; createdAt: string };
 type Item = {
   id: string;
@@ -17,26 +24,76 @@ type Item = {
   isSecret?: boolean;
   secretFor?: string | null;
   done?: boolean;
-  createdAt?: string;
+  createdAt?: string; // used for sort + display
   alreadyDone?: Record<string, boolean>;
   reactions?: Record<string, string>;
   comments?: Comment[];
 };
+
 type ListDoc = { categories: Category[]; items: Item[] };
 
-/* ========= Helpers ========= */
-function catHue(id: string) {
-  let h = 0;
-  for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) >>> 0;
-  return h % 360;
+/* ========= Accessible palette (distinct + readable) ========= */
+/* Each entry: background, border, readable text color */
+const CATEGORY_PALETTE: Array<{ bg: string; border: string; fg: string }> = [
+  { bg: "#ef4444", border: "#b91c1c", fg: "#ffffff" }, // red
+  { bg: "#f97316", border: "#c2410c", fg: "#ffffff" }, // orange
+  { bg: "#f59e0b", border: "#b45309", fg: "#111111" }, // amber
+  { bg: "#eab308", border: "#a16207", fg: "#111111" }, // yellow
+  { bg: "#84cc16", border: "#4d7c0f", fg: "#111111" }, // lime
+  { bg: "#22c55e", border: "#15803d", fg: "#ffffff" }, // green
+  { bg: "#10b981", border: "#047857", fg: "#ffffff" }, // emerald
+  { bg: "#14b8a6", border: "#0f766e", fg: "#111111" }, // teal
+  { bg: "#06b6d4", border: "#0e7490", fg: "#111111" }, // cyan
+  { bg: "#0ea5e9", border: "#075985", fg: "#ffffff" }, // sky
+  { bg: "#3b82f6", border: "#1d4ed8", fg: "#ffffff" }, // blue
+  { bg: "#6366f1", border: "#4338ca", fg: "#ffffff" }, // indigo
+  { bg: "#8b5cf6", border: "#6d28d9", fg: "#ffffff" }, // violet
+  { bg: "#a855f7", border: "#7e22ce", fg: "#ffffff" }, // purple
+  { bg: "#d946ef", border: "#a21caf", fg: "#ffffff" }, // fuchsia
+  { bg: "#ec4899", border: "#be185d", fg: "#ffffff" }, // pink
+  { bg: "#f43f5e", border: "#be123c", fg: "#ffffff" }, // rose
+  { bg: "#22d3ee", border: "#0891b2", fg: "#111111" }, // light cyan
+  { bg: "#84a59d", border: "#52796f", fg: "#ffffff" }, // muted green
+  { bg: "#fb923c", border: "#c2410c", fg: "#111111" }, // light orange
+  { bg: "#34d399", border: "#059669", fg: "#111111" }, // light emerald
+  { bg: "#60a5fa", border: "#1d4ed8", fg: "#ffffff" }, // light blue
+  { bg: "#e879f9", border: "#a21caf", fg: "#111111" }, // light fuchsia
+  { bg: "#fda4af", border: "#be123c", fg: "#111111" }, // light rose
+];
+
+/* ======= Color helpers ======= */
+function nextColorIndex(categories: Category[]) {
+  const used = new Set<number>();
+  categories.forEach(c => { if (typeof c.colorIndex === "number") used.add(c.colorIndex); });
+  for (let i = 0; i < CATEGORY_PALETTE.length; i++) if (!used.has(i)) return i;
+  return (categories.length * 7) % CATEGORY_PALETTE.length; // fallback when > palette size
 }
-function catColors(id: string) {
-  const hue = catHue(id);
-  // darker bg for legibility on white text
-  return {
-    bgDark: `hsl(${hue} 70% 28%)`,
-    border: `hsl(${hue} 70% 35%)`,
-  };
+function colorForCategory(c: Category) {
+  const idx = (c.colorIndex ?? 0) % CATEGORY_PALETTE.length;
+  return CATEGORY_PALETTE[idx];
+}
+function ensureCategoryColors(doc: ListDoc): { changed: boolean; doc: ListDoc } {
+  const used = new Set<number>();
+  const out: Category[] = [];
+  let changed = false;
+  doc.categories.forEach((c) => {
+    if (typeof c.colorIndex === "number") { used.add(c.colorIndex); out.push(c); }
+    else {
+      let idx = 0;
+      for (let i = 0; i < CATEGORY_PALETTE.length; i++) if (!used.has(i)) { idx = i; used.add(i); break; }
+      out.push({ ...c, colorIndex: idx }); changed = true;
+    }
+  });
+  if (!changed) return { changed, doc };
+  return { changed, doc: { ...doc, categories: out } };
+}
+
+/* ======= Small UI helper ======= */
+function fmtDate(iso?: string) {
+  if (!iso) return "";
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  } catch { return iso; }
 }
 
 export default function Page() {
@@ -51,7 +108,8 @@ export default function Page() {
   const [loading, setLoading] = useState(true);
   const [joinCode, setJoinCode] = useState("");
   const [newCategory, setNewCategory] = useState("");
-  const [selectedCat, setSelectedCat] = useState<string | "all">("all"); // "secret" will be added too
+  const [selectedCat, setSelectedCat] = useState<string | "all">("all"); // category filter
+  const [secretOnly, setSecretOnly] = useState(false);                   // separate toggle
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session as any));
@@ -95,12 +153,23 @@ export default function Page() {
   async function ensureMembershipAndList(coupleId: string) {
     const { data: mems } = await supabase.from("couple_members").select("user_id").eq("couple_id", coupleId);
     setMembers(mems || []);
+
     const { data: lst } = await supabase.from("lists").select("data").eq("couple_id", coupleId).maybeSingle();
     if (!lst) {
-      await supabase.from("lists").insert({ couple_id: coupleId });
-      setListDoc({ categories: [{ id: "books", name: "Books" }, { id: "places", name: "Places" }], items: [] });
+      const seed: ListDoc = {
+        categories: [
+          { id: "books",  name: "Books",  colorIndex: 0 },
+          { id: "places", name: "Places", colorIndex: 1 },
+        ],
+        items: []
+      };
+      await supabase.from("lists").insert({ couple_id: coupleId, data: seed });
+      setListDoc(seed);
     } else {
-      setListDoc(lst.data as ListDoc);
+      const existing = lst.data as ListDoc;
+      const { changed, doc } = ensureCategoryColors(existing);
+      setListDoc(doc);
+      if (changed) await supabase.from("lists").update({ data: doc }).eq("couple_id", coupleId);
     }
   }
   function subscribeRealtime(coupleId: string) {
@@ -143,7 +212,9 @@ export default function Page() {
   function addCategory() {
     if (!newCategory.trim() || !listDoc) return;
     const id = crypto.randomUUID();
-    saveDoc({ ...listDoc, categories: [...listDoc.categories, { id, name: newCategory.trim() }] });
+    const idx = nextColorIndex(listDoc.categories);
+    const cat: Category = { id, name: newCategory.trim(), colorIndex: idx };
+    saveDoc({ ...listDoc, categories: [...listDoc.categories, cat] });
     setNewCategory("");
   }
   function renameCategory(id: string, name: string) {
@@ -205,7 +276,7 @@ export default function Page() {
     const items = listDoc.items.map(i => {
       if (i.id !== itemId) return i;
       const r = { ...(i.reactions || {}) };
-      // toggle: click same emoji again to remove
+      // toggle: click again to remove
       if (r[myId] === emoji) delete r[myId];
       else r[myId] = emoji;
       return { ...i, reactions: r };
@@ -241,20 +312,20 @@ export default function Page() {
     saveDoc({ ...listDoc, items: updated });
   }
 
-  /* ========= Derived ========= */
+  /* ========= Derived (sort + filter) ========= */
   const visibleItems = !listDoc
     ? []
     : [...listDoc.items]
-        // unfinished first, finished last
+        // unfinished first, finished last; newest first within each group
         .sort((a, b) => {
           if (!!a.done !== !!b.done) return a.done ? 1 : -1;
           const ta = a.createdAt ? Date.parse(a.createdAt) : 0;
           const tb = b.createdAt ? Date.parse(b.createdAt) : 0;
-          return tb - ta; // newest first within each group
+          return tb - ta;
         })
         .filter(i => {
-          if (selectedCat === "all") return true;
-          if (selectedCat === "secret") return i.isSecret && i.creatorId === myId;
+          if (secretOnly) return i.isSecret && i.creatorId === myId; // independent toggle
+          if (selectedCat === "all")  return true;
           if (selectedCat === "null") return i.categoryId === null;
           return i.categoryId === selectedCat;
         });
@@ -265,7 +336,7 @@ export default function Page() {
   if (!session)
     return (
       <div className="card">
-        <h1>N&A Bucket List</h1>
+        <h1>Couples Bucket List</h1>
         <p className="muted">Sign in with a magic link.</p>
         <div className="row">
           <input placeholder="your@email.com" value={email} onChange={e=>setEmail(e.target.value)}/>
@@ -297,8 +368,8 @@ export default function Page() {
     <>
       <div className="row" style={{justifyContent:"space-between"}}>
         <div>
-          <h1>N&A Bucket List</h1>
-          <p className="muted">Share this couple code with your partner to join: <span className="badge">{coupleCode}</span></p>
+          <h1>Couples Bucket List</h1>
+          <p className="muted">Share this couple code with your partner: <span className="badge">{coupleCode}</span></p>
           <p className="muted">Signed in as: {session.user.email}</p>
         </div>
         <button onClick={signOut}>Sign out</button>
@@ -314,10 +385,10 @@ export default function Page() {
           </div>
           <ul>
             {listDoc?.categories.map(c => {
-              const col = catColors(c.id);
+              const col = colorForCategory(c);
               return (
                 <li key={c.id} className="row" style={{marginTop:8}}>
-                  <span className="badge" style={{background: col.bgDark, borderColor: col.border, color:"#e5e7eb"}}>{c.name}</span>
+                  <span className="badge" style={{background: col.bg, borderColor: col.border, color: col.fg}}>{c.name}</span>
                   <input value={c.name} onChange={e=>renameCategory(c.id, e.target.value)} style={{flex:1}} />
                   <button onClick={()=>deleteCategory(c.id)}>Delete</button>
                 </li>
@@ -335,32 +406,43 @@ export default function Page() {
         />
       </div>
 
-      {/* Filter tabs */}
+      {/* Filter controls */}
       <div className="card">
-        <div className="tabs">
-          <button className={`tab ${selectedCat === "all" ? "active" : ""}`} onClick={()=>setSelectedCat("all")}>All</button>
-          {listDoc?.categories.map(c => {
-            const col = catColors(c.id);
-            return (
-              <button
-                key={c.id}
-                className={`tab ${selectedCat === c.id ? "active" : ""}`}
-                onClick={()=>setSelectedCat(c.id)}
-                style={{background: col.bgDark, borderColor: col.border, color:"#e5e7eb"}}
-              >
-                {c.name}
-              </button>
-            );
-          })}
-          <button className={`tab ${selectedCat === "null" ? "active" : ""}`} onClick={()=>setSelectedCat("null")}>Misc</button>
-          {/* Secret tab (shows only your own hidden items) */}
+        <div className="tabs" style={{justifyContent:"space-between", alignItems:"center", gap:12, flexWrap:"wrap"}}>
+          {/* Left: category tabs */}
+          <div className="row" style={{gap:8, flexWrap:"wrap"}}>
+            <button
+              className={`tab ${selectedCat === "all" ? "active" : ""}`}
+              onClick={()=>setSelectedCat("all")}
+            >All</button>
+
+            {listDoc?.categories.map(c => {
+              const col = colorForCategory(c);
+              return (
+                <button
+                  key={c.id}
+                  className={`tab ${selectedCat === c.id ? "active" : ""}`}
+                  onClick={()=>setSelectedCat(c.id)}
+                  style={{background: col.bg, borderColor: col.border, color: col.fg}}
+                >
+                  {c.name}
+                </button>
+              );
+            })}
+
+            <button
+              className={`tab ${selectedCat === "null" ? "active" : ""}`}
+              onClick={()=>setSelectedCat("null")}
+            >No category</button>
+          </div>
+
+          {/* Right: distinct Secret toggle */}
           <button
-            className={`tab ${selectedCat === "secret" ? "active" : ""}`}
-            onClick={()=>setSelectedCat("secret")}
-            style={{background:"#7c3aed", borderColor:"#a78bfa", color:"#fff"}}
-            title="Your secret items"
+            className={`secret-toggle ${secretOnly ? "on" : ""}`}
+            onClick={()=>setSecretOnly(!secretOnly)}
+            title="Show only items you marked as secret"
           >
-            Secret 🔒
+            🔒 My secrets {secretOnly ? "ON" : "OFF"}
           </button>
         </div>
       </div>
@@ -377,22 +459,23 @@ export default function Page() {
           const myEmoji = i.reactions?.[myId || ""] || null;
           const canReact = myId && i.creatorId !== myId;
 
-          const cat = i.categoryId ? listDoc?.categories.find(c=>c.id===i.categoryId) : null;
-          const col = cat ? catColors(cat.id) : null;
-          const createdByMe = i.creatorId === myId;
+          const cat  = i.categoryId ? listDoc?.categories.find(c=>c.id===i.categoryId) : null;
+          const col  = cat ? colorForCategory(cat) : null;
+          const mine = i.creatorId === myId;
 
           return (
             <div key={i.id} className="card" style={{marginTop:12}}>
               <div className="row" style={{justifyContent:"space-between"}}>
                 <div>
                   <div className="row" style={{gap:8, alignItems:"center"}}>
-                    <span className={`badge ${createdByMe ? "me" : "partner"}`}>
-                      {createdByMe ? "Created by me" : "Created by partner"}
+                    <span className={`badge ${mine ? "me" : "partner"}`}>
+                      {mine ? "Created by me" : "Created by partner"}
                     </span>
                     {i.done ? <span className="badge">Done together ✅</span> : null}
                     {i.categoryId
-                      ? <span className="badge" style={{background: col!.bgDark, borderColor: col!.border, color:"#e5e7eb"}}>{cat?.name || "Category"}</span>
-                      : <span className="badge">Misc</span>}
+                      ? <span className="badge" style={{background: col!.bg, borderColor: col!.border, color: col!.fg}}>{cat?.name || "Category"}</span>
+                      : <span className="badge">No category</span>}
+                    {i.createdAt ? <span className="badge muted">Created {fmtDate(i.createdAt)}</span> : null}
                     {i.isSecret ? <span className="badge">Secret</span> : null}
                     {partnerId && i.alreadyDone?.[partnerId] ? <span className="badge">Partner already did this</span> : null}
                     {myEmoji ? <span className="badge">You: {myEmoji}</span> : null}
@@ -419,8 +502,8 @@ export default function Page() {
                   <button onClick={()=>toggleAlreadyDone(i.id)}>
                     {myAlready ? "Unmark Done solo" : "Done solo"}
                   </button>
-                  {createdByMe && <button onClick={()=>editItem(i.id)}>Edit</button>}
-                  {createdByMe && <button onClick={()=>deleteItem(i.id)}>🗑️ Bin</button>}
+                  {mine && <button onClick={()=>editItem(i.id)}>Edit</button>}
+                  {mine && <button onClick={()=>deleteItem(i.id)}>🗑️ Bin</button>}
                 </div>
               </div>
 
@@ -428,9 +511,9 @@ export default function Page() {
               {canReact && (
                 <div className="row" style={{marginTop:8}}>
                   {"❤️ 😂 👍 😍 😮".split(" ").map(e => {
-                    const mine = i.reactions?.[myId!] === e;
+                    const selected = i.reactions?.[myId!] === e;
                     return (
-                      <button key={e} className={mine ? "emoji-selected" : ""} onClick={()=>react(i.id, e)}>
+                      <button key={e} className={selected ? "emoji-selected" : ""} onClick={()=>react(i.id, e)}>
                         {e}
                       </button>
                     );
@@ -443,10 +526,10 @@ export default function Page() {
                 {i.comments && i.comments.length > 0 && (
                   <div style={{marginBottom:6}}>
                     {i.comments.slice().sort((a,b)=>Date.parse(a.createdAt)-Date.parse(b.createdAt)).map(c => {
-                      const mine = c.userId === myId;
+                      const mineC = c.userId === myId;
                       return (
                         <div key={c.id} className="comment">
-                          <span className="badge" style={{marginRight:8}}>{mine ? "You" : (c.userId === i.creatorId ? "Author" : "Partner")}</span>
+                          <span className="badge" style={{marginRight:8}}>{mineC ? "You" : (c.userId === i.creatorId ? "Author" : "Partner")}</span>
                           <span>{c.text}</span>
                         </div>
                       );
@@ -487,7 +570,7 @@ function AddItemCard({
         <select value={cat} onChange={e=>setCat(e.target.value)}>
           <option value="all">Choose category…</option>
           {categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-          <option value="null">Misc</option>
+          <option value="null">No category</option>
         </select>
       </div>
       <div style={{marginTop:8}}>
