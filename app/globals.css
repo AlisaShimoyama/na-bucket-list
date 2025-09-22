@@ -33,3 +33,26 @@ button:hover{background:#232a31}
 /* creator badges */
 .badge.me{background:#0b4a2f;border-color:#0f6b45;color:#e5e7eb}
 .badge.partner{background:#3b1a4b;border-color:#5f2b7b;color:#e5e7eb}
+
+/* tabs + readability */
+.tabs{display:flex;gap:8px;flex-wrap:wrap}
+.tab{padding:6px 12px;border-radius:999px;border:1px solid #2a2f36;background:#0f1115;color:#e5e7eb;cursor:pointer}
+.tab.active{background:#1a1f24}
+
+/* distinct Secret toggle (not a tab) */
+.secret-toggle{
+  padding:6px 12px;border-radius:999px;border:1px dashed #a78bfa;background:#1b1330;color:#f3e8ff;cursor:pointer
+}
+.secret-toggle.on{background:#7c3aed;color:#ffffff;border-color:#c4b5fd}
+
+.emoji-selected{outline:2px solid #64748b}
+.comment{padding:6px 0;border-bottom:1px solid #1f2428}
+.comment:last-child{border-bottom:0}
+
+/* creator badges */
+.badge.me{background:#0b4a2f;border-color:#0f6b45;color:#e5e7eb}
+.badge.partner{background:#3b1a4b;border-color:#5f2b7b;color:#e5e7eb}
+
+/* subtle badge variant for dates */
+.badge.muted{opacity:.85}
+
